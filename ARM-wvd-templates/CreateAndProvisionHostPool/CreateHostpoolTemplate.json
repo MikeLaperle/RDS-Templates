@@ -104,6 +104,20 @@
       },
       "defaultValue": ""
     },
+    "useDedicatedHost": {
+      "type": "bool",
+      "metadata": {
+        "description": "Whether to use dedicated hosts for session hosts VMs NOTE: this will disable availability set creation"
+      },
+      "defaultValue": false
+    },
+    "dedicatedHostId": {
+      "type": "string",
+      "metadata": {
+        "description": "Host ID the VMs will reside on"
+      },
+      "defaultValue": ""
+    },
     "createAvailabilitySet": {
       "type": "bool",
       "metadata": {
@@ -419,6 +433,7 @@
     "rdshManagedDisks": "[if(equals(parameters('vmImageType'), 'CustomVHD'), parameters('vmUseManagedDisks'), bool('true'))]",
     "rdshPrefix": "[concat(parameters('vmNamePrefix'),'-')]",
     "avSetSKU": "[if(variables('rdshManagedDisks'), 'Aligned', 'Classic')]",
+    "avSetorDedicated": "[if(parameters('useDedicatedHost'),'false', parameters('createAvailabilitySet')]",
     "vhds": "[concat('vhds','/', variables('rdshPrefix'))]",
     "subnet-id": "[resourceId(parameters('virtualNetworkResourceGroupName'),'Microsoft.Network/virtualNetworks/subnets',parameters('existingVnetName'), parameters('existingSubnetName'))]",
     "hostpoolName": "[replace(parameters('hostpoolName'),'\"','')]",
@@ -516,7 +531,7 @@
       "name": "[concat('AVSet-linkedTemplate-', parameters('deploymentId'))]",
       "type": "Microsoft.Resources/deployments",
       "resourceGroup": "[parameters('vmResourceGroup')]",
-      "condition": "[parameters('createAvailabilitySet')]",
+      "condition": "[variables('avSetorDedicated')]",
       "properties": {
         "mode": "Incremental",
         "template": {
@@ -604,6 +619,9 @@
           },
           "administratorAccountPassword": {
             "value": "[parameters('administratorAccountPassword')]"
+          },
+          "dedicatedHostId": {
+            "value": "[parameters('dedicatedHostId')]"
           },
           "subnet-id": {
             "value": "[variables('subnet-id')]"

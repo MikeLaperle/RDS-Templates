@@ -57,7 +57,11 @@
         },
         "rdshVMDiskType": {
             "type": "string",
-            "allowedValues": ["Premium_LRS", "StandardSSD_LRS", "Standard_LRS"],
+            "allowedValues": [
+                "Premium_LRS",
+                "StandardSSD_LRS",
+                "Standard_LRS"
+            ],
             "metadata": {
                 "description": "The VM disk type for the VM: HDD or SSD."
             }
@@ -108,6 +112,13 @@
                 "description": "The URL to store unmanaged disks."
             }
         },
+        "dedicatedHostId": {
+            "type": "string",
+            "metadata": {
+                "description": "Host ID the VMs will reside on"
+            },
+            "defaultValue": ""
+        },
         "subnet-id": {
             "type": "string",
             "metadata": {
@@ -128,9 +139,9 @@
                 "description": "Location for all resources to be created in."
             }
         },
-        "createNetworkSecurityGroup":{
+        "createNetworkSecurityGroup": {
             "type": "bool",
-            "metadata":{
+            "metadata": {
                 "description": "Whether to create a new network security group or use an existing one"
             },
             "defaultValue": false
@@ -187,21 +198,21 @@
         "_guidValue": {
             "type": "string",
             "defaultValue": "[newGuid()]"
-        },        
+        },
         "hostpoolToken": {
             "type": "string",
             "metadata": {
                 "description": "The token for adding VMs to the hostpool"
             }
         },
-        "hostpoolName":{
+        "hostpoolName": {
             "type": "string",
             "metadata": {
                 "description": "The name of the hostpool"
             }
         },
         "ouPath": {
-            "type":"string",
+            "type": "string",
             "metadata": {
                 "description": "OUPath for the domain join"
             },
@@ -217,12 +228,12 @@
     },
     "variables": {
         "domain": "[if(equals(parameters('domain'), ''), last(split(parameters('administratorAccountUsername'), '@')), parameters('domain'))]",
-        "storageAccountType": "[parameters('rdshVMDiskType')]",        
+        "storageAccountType": "[parameters('rdshVMDiskType')]",
         "newNsgName": "[concat(parameters('rdshPrefix'), 'nsg-', parameters('_guidValue'))]",
         "nsgId": "[if(parameters('createNetworkSecurityGroup'), resourceId('Microsoft.Network/networkSecurityGroups', variables('newNsgName')), parameters('networkSecurityGroupId'))]",
         "isVMAdminAccountCredentialsProvided": "[and(not(equals(parameters('vmAdministratorAccountUsername'), '')), not(equals(parameters('vmAdministratorAccountPassword'), '')))]",
         "vmAdministratorUsername": "[if(variables('isVMAdminAccountCredentialsProvided'), parameters('vmAdministratorAccountUsername'), first(split(parameters('administratorAccountUsername'), '@')))]",
-        "vmAdministratorPassword": "[if(variables('isVMAdminAccountCredentialsProvided'), parameters('vmAdministratorAccountPassword'), parameters('administratorAccountPassword'))]"
+        "avSetOrDedicated": "[empty(parameters('dedicatedHostId')]"
     },
     "resources": [
         {
@@ -231,7 +242,7 @@
             "type": "Microsoft.Resources/deployments",
             "properties": {
                 "mode": "Incremental",
-                "template":{
+                "template": {
                     "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
                     "contentVersion": "1.0.0.0",
                     "resources": [
@@ -273,7 +284,7 @@
                     }
                 ],
                 "enableAcceleratedNetworking": "[parameters('enableAcceleratedNetworking')]",
-                "networkSecurityGroup":"[if(empty(parameters('networkSecurityGroupId')), json('null'), json(concat('{\"id\": \"', variables('nsgId'), '\"}')))]"                     
+                "networkSecurityGroup": "[if(empty(parameters('networkSecurityGroupId')), json('null'), json(concat('{\"id\": \"', variables('nsgId'), '\"}')))]"
             },
             "dependsOn": [
                 "NSG-linkedTemplate"
@@ -284,6 +295,7 @@
             "type": "Microsoft.Compute/virtualMachines",
             "name": "[concat(parameters('rdshPrefix'), add(copyindex(), parameters('vmInitialNumber')))]",
             "location": "[parameters('location')]",
+            "condition": "[empty(parameters('dedicatedHostId'))]",
             "tags": "[parameters('virtualMachineTags')]",
             "copy": {
                 "name": "rdsh-vm-loop",
@@ -335,10 +347,67 @@
         },
         {
             "apiVersion": "2018-10-01",
+            "type": "Microsoft.Compute/virtualMachines",
+            "name": "[concat(parameters('rdshPrefix'), add(copyindex(), parameters('vmInitialNumber')))]",
+            "location": "[parameters('location')]",
+            "condition": "[If(empty(parameters('dedicatedHostId')), 'False', 'True')]",
+            "tags": "[parameters('virtualMachineTags')]",
+            "copy": {
+                "name": "rdsh-vm-loop",
+                "count": "[parameters('rdshNumberOfInstances')]"
+            },
+            "dependsOn": [
+                "[concat('Microsoft.Network/networkInterfaces/', parameters('rdshPrefix'), add(copyindex(), parameters('vmInitialNumber')), '-nic')]"
+            ],
+            "properties": {
+                "hardwareProfile": {
+                    "vmSize": "[parameters('rdshVmSize')]"
+                },
+                "Host": {
+                    "id": "[parameters('dedicatedHostId')]"
+                },
+                "osProfile": {
+                    "computerName": "[concat(parameters('rdshPrefix'), add(copyindex(), parameters('vmInitialNumber')))]",
+                    "adminUsername": "[variables('vmAdministratorUsername')]",
+                    "adminPassword": "[variables('vmAdministratorPassword')]"
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "publisher": "[parameters('vmGalleryImagePublisher')]",
+                        "offer": "[parameters('vmGalleryImageOffer')]",
+                        "sku": "[parameters('vmGalleryImageSKU')]",
+                        "version": "latest"
+                    },
+                    "osDisk": {
+                        "createOption": "FromImage",
+                        "managedDisk": {
+                            "storageAccountType": "[variables('storageAccountType')]"
+                        }
+                    }
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(parameters('rdshPrefix'), add(copyindex(), parameters('vmInitialNumber')), '-nic'))]"
+                        }
+                    ]
+                },
+                "diagnosticsProfile": {
+                    "bootDiagnostics": {
+                        "enabled": false
+                    }
+                },
+                "licenseType": "Windows_Client"
+            }
+        },
+        {
+            "apiVersion": "2018-10-01",
             "type": "Microsoft.Compute/virtualMachines/extensions",
             "name": "[concat(parameters('rdshPrefix'), add(copyindex(), parameters('vmInitialNumber')), '/', 'joindomain')]",
             "location": "[parameters('location')]",
-            "dependsOn": ["rdsh-vm-loop"],
+            "dependsOn": [
+                "rdsh-vm-loop"
+            ],
             "copy": {
                 "name": "rdsh-domain-join-loop",
                 "count": "[parameters('rdshNumberOfInstances')]"
@@ -365,7 +434,9 @@
             "type": "Microsoft.Compute/virtualMachines/extensions",
             "name": "[concat(parameters('rdshPrefix'), add(copyindex(), parameters('vmInitialNumber')), '/', 'dscextension')]",
             "location": "[parameters('location')]",
-            "dependsOn": ["rdsh-domain-join-loop"],
+            "dependsOn": [
+                "rdsh-domain-join-loop"
+            ],
             "copy": {
                 "name": "rdsh-dsc-loop",
                 "count": "[parameters('rdshNumberOfInstances')]"
